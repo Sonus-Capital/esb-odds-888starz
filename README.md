@@ -1,6 +1,10 @@
 # 888starz esports odds scraper
 
-Scrapes public esports match-winner odds from 888starz using the unauthenticated cyber feed API.
+Scrapes public esports match-winner odds from 888starz via Playwright + the unauthenticated cyber feed API.
+
+## Why Playwright?
+
+Raw `httpx` requests to 888starz's cyber feed return `400 InvalidQueryParametersException` from cloud IPs. Letting the official SPA load inside Chromium establishes the correct session/context, then `page.evaluate(fetch...)` calls the same endpoints the UI uses.
 
 ## Source
 
@@ -10,12 +14,23 @@ Scrapes public esports match-winner odds from 888starz using the unauthenticated
 
 Supported `hubSlugs`: `cs-2`, `dota-2`, `league-of-legends`, `valorant`, `rainbow-six`, `starcraft-2`, `overwatch`, `honor-of-kings`.
 
-## Output fields
+## Output fields (SCHEMA-LOCK-2026-06-07)
 
-- `event_id`, `const_id`
-- `brand` = `888starz`
-- `game`, `league`, `team_a`, `team_b`
-- `is_live`, `start_time`, `stage`
-- `markets`: `[{market_id: "match_winner", outcome_id: "H"/"A", team, odds}]`
+- `bookmaker` = `888starz`
+- `game_raw`, `game`
+- `tournament_name`
+- `team1`, `team2`
+- `match_start_time`, `match_url`
+- `market_name` = `Match Winner`
+- `price_team1`, `price_team2`, `price_draw`
+
+Optional input fields:
+
+- `proxyUrl`: an HTTP proxy URL (`http://user:pass@host:port`) to route Playwright through.
+- `hubSlugs`: list of game slugs to restrict scraping.
+- `includeLine` / `includeLive`
+- `headless`: set to `false` for headed debugging.
+
+888starz only accepts traffic from a restricted set of countries, so the proxy must terminate in one of those markets.
 
 See `888STARZ-API.md` in the parent directory for the full API contract.

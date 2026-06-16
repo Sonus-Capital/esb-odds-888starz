@@ -43,7 +43,13 @@
             "title": "HTTP request timeout (seconds)",
             "type": "number",
             "description": "Per-request timeout.",
-            "default": 45.0
+            "default": 30.0
+        },
+        "headless": {
+            "title": "Run Playwright headless",
+            "type": "boolean",
+            "description": "If false, runs headed Chromium (useful for debugging).",
+            "default": true
         }
     },
     "required": []

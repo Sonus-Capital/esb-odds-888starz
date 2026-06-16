@@ -1,10 +1,10 @@
 {
   "actorSpecification": 1,
   "name": "esb-odds-888starz",
-  "version": "1.1",
+  "version": "1.2",
   "buildTag": "latest",
   "environmentVariables": {},
   "title": "888starz esports odds",
-  "description": "Scrapes public esports match-winner odds from 888starz via SSR hub pages.",
+  "description": "Scrapes public esports match-winner odds from 888starz via Playwright + cyber feed API.",
   "input": "./input_schema.json"
 }
