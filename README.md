@@ -1,16 +1,21 @@
 # 888starz esports odds scraper
 
-Public 888starz esports odds via DOM/text scraping.
+Scrapes public esports match-winner odds from 888starz using the unauthenticated cyber feed API.
 
-## Flow
+## Source
 
-1. Open `https://888starz.bet/en/esports/real/all`.
-2. Discover game hub links (`/en/esports/real/{game}`).
-3. Click through each hub and extract event card links.
-4. Parse event URL for game, league, event id; parse link text for W1/W2 odds and scores.
+- Menu discovery: `GET https://888starz.bet/cyber-api/mainfeedline/web/cyber/v3/leftmenu/real?fcountry=12&gr=789&lng=en&ref=233`
+- Pre-match events: `GET https://888starz.bet/cyber-api/mainfeedline/web/cyber/v3/gamesBySport/real?...&subSport=<id>`
+- Live events: `GET https://888starz.bet/cyber-api/mainfeedlive/web/cyber/v3/gamesBySport/real?...&subSport=<id>`
 
-## Inputs
+Supported `hubSlugs`: `cs-2`, `dota-2`, `league-of-legends`, `valorant`, `rainbow-six`, `starcraft-2`, `overwatch`, `honor-of-kings`.
 
-- `hubSlugs`: array of game slugs to limit scraping (e.g. `["cs-2", "dota-2"]`).
-- `maxHubs`: integer limit on hubs (0 = all).
-- `headful`: debug mode.
+## Output fields
+
+- `event_id`, `const_id`
+- `brand` = `888starz`
+- `game`, `league`, `team_a`, `team_b`
+- `is_live`, `start_time`, `stage`
+- `markets`: `[{market_id: "match_winner", outcome_id: "H"/"A", team, odds}]`
+
+See `888STARZ-API.md` in the parent directory for the full API contract.

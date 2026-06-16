@@ -6,24 +6,40 @@
         "hubSlugs": {
             "title": "Game hub slugs to scrape",
             "type": "array",
-            "description": "If empty, scrape all discovered hubs. Example: [\"cs-2\", \"dota-2\"]",
-            "default": [],
+            "description": "Leave empty to scrape all supported esports.",
             "editor": "json",
+            "default": [],
             "items": {
                 "type": "string"
             }
         },
         "maxHubs": {
-            "title": "Maximum hubs",
+            "title": "Max number of hubs to scrape",
             "type": "integer",
-            "description": "0 = unlimited. Limits number of game hubs processed.",
+            "description": "0 = unlimited.",
             "default": 0
         },
-        "headful": {
-            "title": "Run headful",
+        "includeLine": {
+            "title": "Include pre-match line",
             "type": "boolean",
-            "description": "Launch a visible browser (useful for debugging).",
-            "default": false
+            "default": true
+        },
+        "includeLive": {
+            "title": "Include live",
+            "type": "boolean",
+            "default": true
+        },
+        "proxyUrl": {
+            "title": "Optional proxy URL",
+            "type": "string",
+            "editor": "textfield",
+            "default": "",
+            "nullable": true
+        },
+        "requestTimeout": {
+            "title": "HTTP request timeout (seconds)",
+            "type": "number",
+            "default": 45.0
         }
     },
     "required": []
