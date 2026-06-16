@@ -158,7 +158,7 @@ async def main() -> None:
         proxies = {"http://": proxy_url, "https://": proxy_url} if proxy_url else None
         client = httpx.AsyncClient(
             headers={"User-Agent": USER_AGENT},
-            proxies=proxies,  # type: ignore[arg-type]
+            proxy=proxy_url,
             http2=True,
             follow_redirects=True,
         )
