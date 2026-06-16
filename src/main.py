@@ -132,16 +132,15 @@ def extract_record(game: dict[str, Any], sport_name: str, now: str) -> Optional[
 
 
 async def goto_esports(page, actor, timeout: float) -> None:
-    actor.log.info("Loading 888starz esports hub...")
-    await page.goto(
-        f"{BASE_URL}/en/esports",
-        wait_until="domcontentloaded",
-        timeout=int(timeout * 1000),
-    )
+    # Load a specific cyber hub page so the SPA initializes the feed context.
+    entry_url = f"{BASE_URL}/en/esports/real/cs-2/line"
+    actor.log.info(f"Loading 888starz esports hub ({entry_url})...")
+    await page.goto(entry_url, wait_until="domcontentloaded", timeout=int(timeout * 1000))
     actor.log.info("Waiting for CF challenge + page hydration (12s)...")
     await asyncio.sleep(12)
     title = await page.title()
-    actor.log.info(f"Page title: {title!r}")
+    url = page.url
+    actor.log.info(f"Page title: {title!r} url: {url!r}")
 
 
 async def fetch_subsports(page, actor, live: bool) -> List[int]:
@@ -159,6 +158,7 @@ async def fetch_subsports(page, actor, live: bool) -> List[int]:
             }}
             """
         )
+        actor.log.info(f"leftmenu raw ({'live' if live else 'line'}): {len(raw)} chars")
         data = json.loads(raw)
         ids = [item["subSportId"] for item in data if "subSportId" in item]
         actor.log.info(f"{'Live' if live else 'Prematch'} subSports from menu: {ids}")
