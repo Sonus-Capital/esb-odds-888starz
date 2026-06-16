@@ -1,0 +1,30 @@
+{
+    "title": "888starz esports odds input",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "hubSlugs": {
+            "title": "Game hub slugs to scrape",
+            "type": "array",
+            "description": "If empty, scrape all discovered hubs. Example: [\"cs-2\", \"dota-2\"]",
+            "default": [],
+            "editor": "json",
+            "items": {
+                "type": "string"
+            }
+        },
+        "maxHubs": {
+            "title": "Maximum hubs",
+            "type": "integer",
+            "description": "0 = unlimited. Limits number of game hubs processed.",
+            "default": 0
+        },
+        "headful": {
+            "title": "Run headful",
+            "type": "boolean",
+            "description": "Launch a visible browser (useful for debugging).",
+            "default": false
+        }
+    },
+    "required": []
+}
