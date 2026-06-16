@@ -52,8 +52,17 @@ COMMON_PARAMS = {
     "cfView": "3",
 }
 
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
+COMMON_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Referer": "https://888starz.bet/en/esports/real/cs-2/line",
+    "Origin": "https://888starz.bet",
+    "Connection": "keep-alive",
+}
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -125,8 +134,11 @@ def build_record(game: dict[str, Any], is_live: bool) -> dict[str, Any] | None:
 async def fetch_games(client: httpx.AsyncClient, endpoint: str, sub_sport: int, timeout: float) -> list[dict[str, Any]]:
     url = urljoin(BASE_URL, endpoint)
     params = {**COMMON_PARAMS, "subSport": str(sub_sport)}
-    r = await client.get(url, params=params, timeout=timeout)
-    r.raise_for_status()
+    r = await client.get(url, params=params, headers=COMMON_HEADERS, timeout=timeout)
+    Actor.log.info(f"{endpoint} subSport={sub_sport} -> HTTP {r.status_code}")
+    if r.status_code >= 400:
+        Actor.log.warning(f"Body: {r.text[:500]}")
+        r.raise_for_status()
     data = r.json()
     games = data.get("games", [])
     # enrich each game with subSport since live endpoint doesn't always include it
@@ -157,9 +169,9 @@ async def main() -> None:
 
         proxies = {"http://": proxy_url, "https://": proxy_url} if proxy_url else None
         client = httpx.AsyncClient(
-            headers={"User-Agent": USER_AGENT},
+            headers=COMMON_HEADERS,
             proxy=proxy_url,
-            http2=True,
+            http2=False,
             follow_redirects=True,
         )
 
