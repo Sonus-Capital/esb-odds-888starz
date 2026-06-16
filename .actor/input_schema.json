@@ -21,11 +21,13 @@
         },
         "includeLine": {
             "title": "Include pre-match line",
+            "description": "If true, fetch pre-match events.",
             "type": "boolean",
             "default": true
         },
         "includeLive": {
             "title": "Include live",
+            "description": "If true, fetch live events.",
             "type": "boolean",
             "default": true
         },
@@ -33,12 +35,14 @@
             "title": "Optional proxy URL",
             "type": "string",
             "editor": "textfield",
+            "description": "HTTP/HTTPS proxy URL to route requests through.",
             "default": "",
             "nullable": true
         },
         "requestTimeout": {
             "title": "HTTP request timeout (seconds)",
             "type": "number",
+            "description": "Per-request timeout.",
             "default": 45.0
         }
     },
