@@ -35,6 +35,7 @@ CANONICAL_GAMES = [
 
 KNOWN_ALIASES = {
     # CS2
+    "CS 2": "CS2",
     "Counter-Strike 2": "CS2",
     "CS:GO": "CS2",
     "CSGO": "CS2",

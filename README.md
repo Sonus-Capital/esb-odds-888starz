@@ -1,18 +1,23 @@
 # 888starz esports odds scraper
 
-Scrapes public esports match-winner odds from 888starz via Playwright + the unauthenticated cyber feed API.
+Scrapes public esports match-winner odds from 888starz via Playwright + the SSR-embedded app state (`window.__CYBER_APP__`).
 
-## Why Playwright?
+## Why Playwright + SSR state?
 
-Raw `httpx` requests to 888starz's cyber feed return `400 InvalidQueryParametersException` from cloud IPs. Letting the official SPA load inside Chromium establishes the correct session/context, then `page.evaluate(fetch...)` calls the same endpoints the UI uses.
+The public `cyber-api` endpoints started returning HTTP 400 in mid-June 2026
+(`feed/InvalidQueryParametersException`). However, 888starz's own web UI still
+loads each cyber/esports discipline with the full game and odds data rendered
+inside the initial HTML as `window.__CYBER_APP__`. This actor navigates to each
+discipline page using a real browser (with optional residential proxy), reads the
+embedded state, and emits match-winner records.
 
 ## Source
 
-- Menu discovery: `GET https://888starz.bet/cyber-api/mainfeedline/web/cyber/v3/leftmenu/real?fcountry=12&gr=789&lng=en&ref=233`
-- Pre-match events: `GET https://888starz.bet/cyber-api/mainfeedline/web/cyber/v3/gamesBySport/real?...&subSport=<id>`
-- Live events: `GET https://888starz.bet/cyber-api/mainfeedlive/web/cyber/v3/gamesBySport/real?...&subSport=<id>`
+- Entry/hub: `https://888starz.bet/en/esports/line` — gives the list of disciplines.
+- Per-discipline line: `https://888starz.bet/en/esports/real/{slug}/line`
+- Per-discipline live: `https://888starz.bet/en/esports/real/{slug}/live`
 
-Supported `hubSlugs`: `cs-2`, `dota-2`, `league-of-legends`, `valorant`, `rainbow-six`, `starcraft-2`, `overwatch`, `honor-of-kings`.
+Supported `hubSlugs` include: `cs-2`, `dota-2`, `league-of-legends`, `valorant`, `rainbow-six`, `starcraft-2`, `overwatch`, `honor-of-kings`, `call-of-duty`, `pubg`, `arena-of-valor`, `crossfire`, `heroes-of-might-and-magic-iii`.
 
 ## Output fields (SCHEMA-LOCK-2026-06-07)
 
@@ -32,5 +37,3 @@ Optional input fields:
 - `headless`: set to `false` for headed debugging.
 
 888starz only accepts traffic from a restricted set of countries, so the proxy must terminate in one of those markets.
-
-See `888STARZ-API.md` in the parent directory for the full API contract.

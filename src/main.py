@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
-888starz Esports Odds Scraper — v1.2 (2026-06-16)
+888starz Esports Odds Scraper — v1.3 (2026-06-17)
 
 Schema: SCHEMA-LOCK-2026-06-07.md
-Changes in v1.2:
-  - Switched from httpx to Playwright page.evaluate(fetch...) so requests reuse
-    the browser's live session/cookies, matching the 1xBet/Vavada pattern.
-  - Proxy support via `proxyUrl` or built-in Apify proxy.
-  - Output aligned with SCHEMA-LOCK keys.
+
+Changes in v1.3:
+  - 888starz public cyber-api endpoints now return HTTP 400, so the actor no
+    longer calls them.
+  - Instead, we navigate to each esports discipline page where the SSR HTML
+    embeds the full app state as `window.__CYBER_APP__`, then extract the
+    pre-rendered game list and moneyline odds.
+  - Keeps Playwright + proxy support (residential IP in an allowlisted country).
 
 Notes:
   - 888starz only accepts players/requests from a restricted country allowlist.
@@ -31,32 +34,26 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("888starz-scraper")
 
 BASE_URL = "https://888starz.bet"
-PARAMS = "cfView=3&fcountry=12&gr=789&lng=en&ref=233"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
 )
 
-SUB_SPORT_MAP: dict[str, int] = {
-    "dota-2": 1,
-    "league-of-legends": 2,
-    "starcraft-2": 4,
-    "overwatch": 11,
-    "honor-of-kings": 14,
-    "rainbow-six": 15,
-    "valorant": 27,
-    "cs-2": 46,
-}
-
-NAME_BY_SUB_SPORT: dict[int, str] = {
-    1: "Dota 2",
-    2: "League of Legends",
-    4: "Starcraft 2",
-    11: "Overwatch",
-    14: "Honor of Kings",
-    15: "Rainbow Six",
-    27: "Valorant",
-    46: "Counter-Strike 2",
+# Map known slugs to a human discipline name when the embedded state doesn't.
+FALLBACK_NAME_BY_SLUG: dict[str, str] = {
+    "cs-2": "CS 2",
+    "dota-2": "Dota 2",
+    "league-of-legends": "League of Legends",
+    "valorant": "Valorant",
+    "starcraft-ii": "Starcraft 2",
+    "rainbow-six": "Rainbow Six",
+    "call-of-duty": "Call of Duty",
+    "overwatch": "Overwatch",
+    "pubg": "PUBG",
+    "honor-of-kings": "Honor of Kings",
+    "arena-of-valor": "Arena of Valor",
+    "crossfire": "Crossfire",
+    "heroes-of-might-and-magic-iii": "Heroes of Might and Magic III",
 }
 
 
@@ -77,13 +74,17 @@ def parse_proxy_url(proxy_url: str) -> dict[str, str] | None:
     return proxy
 
 
-def extract_record(game: dict[str, Any], sport_name: str, now: str) -> Optional[Dict[str, Any]]:
+def extract_record(item: dict[str, Any], sport_name: str, now: str) -> Optional[Dict[str, Any]]:
+    """Turn one `gamesAndLigas` node into a SCHEMA-LOCK record."""
+    game = item.get("game") or {}
+    liga = item.get("liga") or game.get("liga") or {}
+
     team1 = ((game.get("opponent1") or {}).get("fullName") or "").strip()
     team2 = ((game.get("opponent2") or {}).get("fullName") or "").strip()
     if not team1 or not team2:
         return None
 
-    liga = (game.get("liga") or {}).get("name", "")
+    liga_name = liga.get("name", "") if isinstance(liga, dict) else ""
     match_id = game.get("id", "")
     match_url = f"{BASE_URL}/en/esports/{match_id}" if match_id else ""
 
@@ -94,7 +95,11 @@ def extract_record(game: dict[str, Any], sport_name: str, now: str) -> Optional[
         start_time = ""
 
     p1 = p2 = p_draw = None
-    for eg in (game.get("eventGroups") or [])[:1]:
+    # Use embedded eventGroups. Match-winner is groupId=1 (types 1=W1, 3=W2, 2=Draw).
+    event_groups = game.get("eventGroups") or []
+    for eg in event_groups:
+        if eg.get("groupId") != 1 and eg.get("shortGroupId") != 1:
+            continue
         for outcome_list in eg.get("events", []):
             for o in outcome_list:
                 t = o.get("type")
@@ -110,6 +115,7 @@ def extract_record(game: dict[str, Any], sport_name: str, now: str) -> Optional[
                     p2 = odds
                 elif t == 2:
                     p_draw = odds
+        break
 
     if p1 is None or p2 is None:
         return None
@@ -118,7 +124,7 @@ def extract_record(game: dict[str, Any], sport_name: str, now: str) -> Optional[
         "bookmaker": "888starz",
         "game_raw": sport_name,
         "game": normalise_game(sport_name),
-        "tournament_name": liga,
+        "tournament_name": liga_name,
         "team1": team1,
         "team2": team2,
         "match_start_time": start_time,
@@ -131,62 +137,57 @@ def extract_record(game: dict[str, Any], sport_name: str, now: str) -> Optional[
     }
 
 
-async def goto_esports(page, actor, timeout: float) -> None:
-    # Load a specific cyber hub page so the SPA initializes the feed context.
-    entry_url = f"{BASE_URL}/en/esports/real/cs-2/line"
-    actor.log.info(f"Loading 888starz esports hub ({entry_url})...")
-    await page.goto(entry_url, wait_until="domcontentloaded", timeout=int(timeout * 1000))
-    actor.log.info("Waiting for CF challenge + page hydration (12s)...")
-    await asyncio.sleep(12)
-    title = await page.title()
-    url = page.url
-    actor.log.info(f"Page title: {title!r} url: {url!r}")
+async def list_disciplines(page) -> list[dict[str, Any]]:
+    """Read the all-disciplines list embedded in the current page state."""
+    js = """
+        () => {
+            const app = window.__CYBER_APP__;
+            const state = app && app.state;
+            if (!state) return [];
+            return state['$scyberAllDisciplines'] || [];
+        }
+    """
+    return await page.evaluate(js) or []
 
 
-async def fetch_subsports(page, actor, live: bool) -> List[int]:
-    endpoint = (
-        "/cyber-api/mainfeedlive/web/cyber/v3/leftmenu/real"
-        if live
-        else "/cyber-api/mainfeedline/web/cyber/v3/leftmenu/real"
-    )
+async def fetch_games_for_discipline(
+    page, actor, slug: str, live: bool
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    """Navigate to a discipline page and return its gamesAndLigas nodes."""
+    kind = "live" if live else "line"
+    url = f"{BASE_URL}/en/esports/real/{slug}/{kind}"
+    actor.log.info(f"  Fetching {url}")
     try:
-        raw = await page.evaluate(
-            f"""
-            async () => {{
-                const r = await fetch('{endpoint}?{PARAMS}');
-                return await r.text();
-            }}
-            """
-        )
-        actor.log.info(f"leftmenu raw ({'live' if live else 'line'}): {len(raw)} chars")
-        data = json.loads(raw)
-        ids = [item["subSportId"] for item in data if "subSportId" in item]
-        actor.log.info(f"{'Live' if live else 'Prematch'} subSports from menu: {ids}")
-        return ids
+        await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+        # Give the inline state a moment to settle, although it is SSR.
+        await asyncio.sleep(0.5)
     except Exception as exc:
-        actor.log.warning(f"Could not fetch {'live' if live else 'prematch'} leftmenu: {exc}")
-        return []
+        actor.log.warning(f"  Failed to load {url}: {exc}")
+        return [], {}, {}
 
-
-async def fetch_games(page, actor, sub_id: int, live: bool) -> dict[str, Any]:
-    endpoint = (
-        "/cyber-api/mainfeedlive/web/cyber/v3/gamesBySport/real"
-        if live
-        else "/cyber-api/mainfeedline/web/cyber/v3/gamesBySport/real"
-    )
-    raw = await page.evaluate(
-        f"""
-        async () => {{
-            const r = await fetch('{endpoint}?{PARAMS}&subSport={sub_id}');
-            return await r.text();
+    js = f"""
+        () => {{
+            const app = window.__CYBER_APP__;
+            const state = app && app.state;
+            if (!state) return {{games: [], subSport: {{}}, sport: {{}}}};
+            const gamesKey = '$scyberSportGamesundefined';
+            const data = (state[gamesKey] && state[gamesKey]['{kind}']) || {{}};
+            return {{
+                games: data.gamesAndLigas || [],
+                subSport: data.subSport || {{}},
+                sport: data.sport || {{}}
+            }};
         }}
-        """
-    )
+    """
     try:
-        return json.loads(raw)
+        result = await page.evaluate(js)
     except Exception as exc:
-        actor.log.warning(f"Failed parsing {'live' if live else 'prematch'} subSport={sub_id}: {exc}")
-        return {}
+        actor.log.warning(f"  Failed to evaluate state for {url}: {exc}")
+        return [], {}, {}
+
+    games = result.get("games", [])
+    actor.log.info(f"  [{kind}] {slug}: {len(games)} raw nodes")
+    return games, result.get("subSport", {}), result.get("sport", {})
 
 
 async def main() -> None:
@@ -199,20 +200,14 @@ async def main() -> None:
         include_line = bool(input_data.get("includeLine", True))
         include_live = bool(input_data.get("includeLive", True))
         proxy_url = input_data.get("proxyUrl") or ""
-        page_timeout = float(input_data.get("requestTimeout") or 30.0)
+        page_timeout = float(input_data.get("requestTimeout") or 60.0)
         headless = bool(input_data.get("headless", True))
 
-        if hub_slugs:
-            wanted_subs = {SUB_SPORT_MAP[s] for s in hub_slugs if s in SUB_SPORT_MAP}
-        else:
-            wanted_subs = set(SUB_SPORT_MAP.values())
-
         actor.log.info(
-            f"888starz scraper v1.2 | proxy={bool(proxy_url)} headless={headless}"
+            f"888starz scraper v1.3 | proxy={bool(proxy_url)} headless={headless}"
         )
 
         proxy = parse_proxy_url(proxy_url)
-
         all_records: List[Dict[str, Any]] = []
         seen: set[str] = set()
 
@@ -237,59 +232,73 @@ async def main() -> None:
             )
             page = await context.new_page()
 
-            await goto_esports(page, actor, page_timeout)
+            # Load the generic esports hub so we can read the discipline list.
+            hub_url = f"{BASE_URL}/en/esports/line"
+            actor.log.info(f"Loading hub {hub_url}")
+            await page.goto(
+                hub_url,
+                wait_until="domcontentloaded",
+                timeout=int(page_timeout * 1000),
+            )
+            await asyncio.sleep(1)
 
-            sub_sports_to_scrape: List[int] = []
-            if include_line:
-                sub_sports_to_scrape.extend(await fetch_subsports(page, actor, live=False))
-            if include_live:
-                sub_sports_to_scrape.extend(await fetch_subsports(page, actor, live=True))
+            title = await page.title()
+            actor.log.info(f"Page title: {title!r} url: {page.url!r}")
 
-            # Deduplicate and filter to wanted subs
-            sub_sports_to_scrape = sorted(set(sub_sports_to_scrape))
-            if wanted_subs:
-                sub_sports_to_scrape = [s for s in sub_sports_to_scrape if s in wanted_subs]
+            disciplines = await list_disciplines(page)
+            if not disciplines:
+                actor.log.warning("No disciplines found in embedded state — aborting.")
+                await browser.close()
+                return
+
+            actor.log.info(f"Disciplines discovered: {len(disciplines)}")
+
+            # Build slug list from embedded allDisciplines.
+            wanted: list[dict[str, Any]] = []
+            for disc in disciplines:
+                slug = disc.get("nameForUrl", "")
+                if not slug:
+                    continue
+                if hub_slugs and slug not in hub_slugs:
+                    continue
+                wanted.append(disc)
+
             if max_hubs > 0:
-                sub_sports_to_scrape = sub_sports_to_scrape[:max_hubs]
+                wanted = wanted[:max_hubs]
 
-            for ss_id in sub_sports_to_scrape:
-                sport_name = NAME_BY_SUB_SPORT.get(ss_id, f"ss_{ss_id}")
+            for disc in wanted:
+                slug = disc["nameForUrl"]
+                sport_name = disc.get("name") or FALLBACK_NAME_BY_SLUG.get(slug, slug)
 
                 if include_line:
-                    data = await fetch_games(page, actor, ss_id, live=False)
-                    games = data.get("games", [])
-                    sport_name = (data.get("subSport") or {}).get("name", sport_name)
-                    t_recs = 0
-                    for g in games:
-                        rec = extract_record(g, sport_name, now)
+                    games, sub_sport, _ = await fetch_games_for_discipline(
+                        page, actor, slug, live=False
+                    )
+                    actual_sport_name = str(sub_sport.get("name") or sport_name)
+                    for item in games:
+                        rec = extract_record(item, actual_sport_name, now)
                         if not rec:
                             continue
-                        key = f"{rec['team1'].lower()}||{rec['team2'].lower()}"
+                        key = f"line:{rec['team1'].lower()}||{rec['team2'].lower()}"
                         if key in seen:
                             continue
                         seen.add(key)
                         all_records.append(rec)
-                        t_recs += 1
-                    if t_recs:
-                        actor.log.info(f"  [line] {sport_name}: {t_recs}")
 
                 if include_live:
-                    data = await fetch_games(page, actor, ss_id, live=True)
-                    games = data.get("games", [])
-                    sport_name = (data.get("subSport") or {}).get("name", sport_name)
-                    t_recs = 0
-                    for g in games:
-                        rec = extract_record(g, sport_name, now)
+                    games, sub_sport, _ = await fetch_games_for_discipline(
+                        page, actor, slug, live=True
+                    )
+                    actual_sport_name = str(sub_sport.get("name") or sport_name)
+                    for item in games:
+                        rec = extract_record(item, actual_sport_name, now)
                         if not rec:
                             continue
-                        key = f"{rec['team1'].lower()}||{rec['team2'].lower()}"
+                        key = f"live:{rec['team1'].lower()}||{rec['team2'].lower()}"
                         if key in seen:
                             continue
                         seen.add(key)
                         all_records.append(rec)
-                        t_recs += 1
-                    if t_recs:
-                        actor.log.info(f"  [live] {sport_name}: {t_recs}")
 
             await browser.close()
 
@@ -302,7 +311,7 @@ async def main() -> None:
             "_meta": True,
             "bookmaker": "888starz",
             "records_total": len(all_records),
-            "method": "playwright_cyber_api",
+            "method": "playwright_ssr_state",
             "scraped_at": now,
         })
 
